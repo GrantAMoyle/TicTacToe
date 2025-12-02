@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tic Tac Toe - With Sound</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #2c3e50;
+            color: white;
+            margin: 0;
+            user-select: none; /* Prevents highlighting text while clicking */
+        }
+
+        h1 { margin-bottom: 10px; }
+
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            background: rgba(0,0,0,0.2);
+            padding: 10px 20px;
+            border-radius: 20px;
+        }
+
+        select {
+            padding: 8px;
+            border-radius: 5px;
+            border: none;
+            font-size: 1rem;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .status {
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+            height: 30px; 
+            color: #ecf0f1;
+            font-weight: bold;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 8px;
+            background-color: #34495e;
+            padding: 8px;
+            border-radius: 10px;
+        }
+
+        .cell {
+            background-color: #ecf0f1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3.5rem;
+            font-weight: bold;
+            cursor: pointer;
+            color: #2c3e50;
+            border-radius: 5px;
+            transition: all 0.2s;
+            box-shadow: 0 4px 0 #bdc3c7;
+        }
+
+        .cell:active {
+            transform: translateY(4px);
+            box-shadow: none;
+        }
+
+        .cell.taken { cursor: default; transform: none; box-shadow: 0 4px 0 #bdc3c7; }
+        .cell.x { color: #e74c3c; } 
+        .cell.o { color: #2980b9; } 
+
+        button {
+            margin-top: 30px;
+            padding: 12px 25px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            background-color: #e67e22;
+            color: white;
+            border: none;
+            border-radius: 30px;
+            box-shadow: 0 4px 0 #d35400;
+            transition: transform 0.1s;
+        }
+        
+        button:hover { background-color: #f39c12; }
+        button:active { transform: translateY(4px); box-shadow: none; }
+    </style>
+</head>
+<body>
+
+    <h1>Tic Tac Toe</h1>
+    
+    <div class="controls">
+        <label for="difficulty">Level:</label>
+        <select id="difficulty" onchange="restartGame()">
+            <option value="easy">Easy</option>
+            <option value="medium" selected>Medium</option>
+            <option value="hard">Impossible</option>
+        </select>
+    </div>
+
+    <div class="status" id="status">Your Turn (X)</div>
+    
+    <div class="board" id="board"></div>
+
+    <button onclick="restartGame()">Restart Game</button>
+
+    <script>
+        // --- SOUND ENGINE (Web Audio API) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playTone(freq, type, duration, delay = 0) {
+            // Ensure audio context is running (browsers sometimes suspend it)
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            osc.type = type; // 'sine', 'square', 'sawtooth', 'triangle'
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime + delay);
+            
+            // Envelope to avoid clicking sound
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime + delay);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + delay + duration);
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            osc.start(audioCtx.currentTime + delay);
+            osc.stop(audioCtx.currentTime + delay + duration);
+        }
+
+        const sounds = {
+            moveX: () => playTone(600, 'sine', 0.1),
+            moveO: () => playTone(400, 'sine', 0.1),
+            win: () => {
+                // Happy Arpeggio
+                playTone(523.25, 'triangle', 0.1, 0);    // C5
+                playTone(659.25, 'triangle', 0.1, 0.1);  // E5
+                playTone(783.99, 'triangle', 0.2, 0.2);  // G5
+                playTone(1046.50, 'square', 0.4, 0.3);   // C6
+            },
+            lose: () => {
+                // Sad Descending
+                playTone(392.00, 'sawtooth', 0.2, 0);    // G4
+                playTone(311.13, 'sawtooth', 0.2, 0.2);  // Eb4
+                playTone(261.63, 'sawtooth', 0.4, 0.4);  // C4
+            },
+            draw: () => {
+                playTone(200, 'square', 0.1, 0);
+                playTone(200, 'square', 0.3, 0.15);
+            }
+        };
+
+        // --- GAME LOGIC ---
+        const HUMAN = 'X';
+        const AI = 'O';
+        let boardState = Array(9).fill(null);
+        let gameActive = true;
+        
+        const boardElement = document.getElementById('board');
+        const statusElement = document.getElementById('status');
+        const difficultySelect = document.getElementById('difficulty');
+
+        function initBoard() {
+            boardElement.innerHTML = '';
+            for (let i = 0; i < 9; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                cell.dataset.index = i;
+                cell.addEventListener('click', handleCellClick);
+                boardElement.appendChild(cell);
+            }
+        }
+
+        function handleCellClick(e) {
+            const index = e.target.dataset.index;
+            if (boardState[index] !== null || !gameActive) return;
+
+            // Human Move
+            makeMove(index, HUMAN);
+
+            if (checkGameOver()) return;
+
+            statusElement.innerText = "Thinking...";
+            gameActive = false;
+
+            // AI Move
+            setTimeout(() => {
+                const difficulty = difficultySelect.value;
+                let moveIndex;
+
+                if (difficulty === 'easy') {
+                    moveIndex = getRandomMove();
+                } else if (difficulty === 'medium') {
+                    moveIndex = (Math.random() > 0.3) ? getBestMove(boardState) : getRandomMove();
+                } else {
+                    moveIndex = getBestMove(boardState);
+                }
+
+                makeMove(moveIndex, AI);
+                
+                if (!checkGameOver()) {
+                    gameActive = true;
+                    statusElement.innerText = "Your Turn (X)";
+                }
+            }, 600);
+        }
+
+        function makeMove(index, player) {
+            boardState[index] = player;
+            const cell = boardElement.children[index];
+            cell.innerText = player;
+            cell.classList.add('taken', player.toLowerCase());
+            
+            // Trigger Sound
+            if (player === HUMAN) sounds.moveX();
+            else sounds.moveO();
+        }
+
+        function getRandomMove() {
+            let available = [];
+            boardState.forEach((val, idx) => { if (val === null) available.push(idx); });
+            return available[Math.floor(Math.random() * available.length)];
+        }
+
+        function checkGameOver() {
+            let result = checkWinner(boardState);
+            if (result === HUMAN) {
+                statusElement.innerText = "You Win!";
+                statusElement.style.color = "#2ecc71";
+                sounds.win();
+                gameActive = false;
+                return true;
+            } else if (result === AI) {
+                statusElement.innerText = "AI Wins!";
+                statusElement.style.color = "#e74c3c";
+                sounds.lose();
+                gameActive = false;
+                return true;
+            } else if (result === 'tie') {
+                statusElement.innerText = "It's a Draw!";
+                statusElement.style.color = "#f1c40f";
+                sounds.draw();
+                gameActive = false;
+                return true;
+            }
+            return false;
+        }
+
+        function restartGame() {
+            boardState = Array(9).fill(null);
+            gameActive = true;
+            statusElement.innerText = "Your Turn (X)";
+            statusElement.style.color = "#ecf0f1";
+            initBoard();
+            // Resume Audio Context just in case
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        // --- Minimax Logic ---
+        const scores = { 'O': 10, 'X': -10, 'tie': 0 };
+
+        function getBestMove(board) {
+            let bestScore = -Infinity;
+            let move;
+            for (let i = 0; i < 9; i++) {
+                if (board[i] === null) {
+                    board[i] = AI;
+                    let score = minimax(board, 0, false);
+                    board[i] = null;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        move = i;
+                    }
+                }
+            }
+            return move;
+        }
+
+        function minimax(board, depth, isMaximizing) {
+            let result = checkWinner(board);
+            if (result !== null) return scores[result];
+
+            if (isMaximizing) {
+                let bestScore = -Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (board[i] === null) {
+                        board[i] = AI;
+                        let score = minimax(board, depth + 1, false);
+                        board[i] = null;
+                        bestScore = Math.max(score, bestScore);
+                    }
+                }
+                return bestScore;
+            } else {
+                let bestScore = Infinity;
+                for (let i = 0; i < 9; i++) {
+                    if (board[i] === null) {
+                        board[i] = HUMAN;
+                        let score = minimax(board, depth + 1, true);
+                        board[i] = null;
+                        bestScore = Math.min(score, bestScore);
+                    }
+                }
+                return bestScore;
+            }
+        }
+
+        function checkWinner(board) {
+            const winningCombos = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                [0, 4, 8], [2, 4, 6]
+            ];
+            for (let combo of winningCombos) {
+                let [a, b, c] = combo;
+                if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+                    return board[a];
+                }
+            }
+            if (!board.includes(null)) return 'tie';
+            return null;
+        }
+
+        initBoard();
+    </script>
+</body>
+</html>
